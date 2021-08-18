@@ -59,6 +59,7 @@
 
 @implementation FLTWebViewController {
   FLTWKWebView* _webView;
+  FLTWKWebView* _popupWebView;
   int64_t _viewId;
   FlutterMethodChannel* _channel;
   NSString* _currentUrl;
@@ -123,6 +124,7 @@
 }
 
 - (void)dealloc {
+  [self releasePopupWebView];
   if (_progressionDelegate != nil) {
     [_progressionDelegate stopObservingProgress:_webView];
   }
@@ -194,21 +196,34 @@
 
 - (void)onCanGoBack:(FlutterMethodCall*)call result:(FlutterResult)result {
   BOOL canGoBack = [_webView canGoBack];
+  if (_popupWebView != nil) {
+    canGoBack = true;
+  }
   result(@(canGoBack));
 }
 
 - (void)onCanGoForward:(FlutterMethodCall*)call result:(FlutterResult)result {
-  BOOL canGoForward = [_webView canGoForward];
+  WKWebView* webView = _popupWebView == nil ? _webView : _popupWebView;
+  BOOL canGoForward = [webView canGoForward];
   result(@(canGoForward));
 }
 
 - (void)onGoBack:(FlutterMethodCall*)call result:(FlutterResult)result {
-  [_webView goBack];
+  if (_popupWebView != nil) {
+    if (_popupWebView.canGoBack) {
+        [_popupWebView goBack];
+    } else {
+        [self releasePopupWebView];
+    }
+  } else {
+    [_webView goBack];
+  }
   result(nil);
 }
 
 - (void)onGoForward:(FlutterMethodCall*)call result:(FlutterResult)result {
-  [_webView goForward];
+  WKWebView* webView = _popupWebView == nil ? _webView : _popupWebView;
+  [webView goForward];
   result(nil);
 }
 
@@ -475,17 +490,37 @@
   }
 }
 
+- (void)releasePopupWebView {
+  if (_popupWebView != nil) {
+    [_popupWebView removeFromSuperview];
+    _popupWebView = nil;
+  }
+}
+
 #pragma mark WKUIDelegate
 
 - (WKWebView*)webView:(WKWebView*)webView
     createWebViewWithConfiguration:(WKWebViewConfiguration*)configuration
                forNavigationAction:(WKNavigationAction*)navigationAction
                     windowFeatures:(WKWindowFeatures*)windowFeatures {
-  if (!navigationAction.targetFrame.isMainFrame) {
-    [webView loadRequest:navigationAction.request];
+  if(!navigationAction.targetFrame.isMainFrame) {
+    if ([navigationAction.request.URL.absoluteString hasPrefix:@"https://m.facebook"] || [navigationAction.request.URL.absoluteString hasPrefix:@"https://mobile.facebook"]) {
+        _popupWebView = [[FLTWKWebView alloc] initWithFrame:self.view.frame configuration:configuration];
+        _popupWebView.UIDelegate = self;
+        _popupWebView.navigationDelegate = _navigationDelegate;
+        _popupWebView.backgroundColor = [UIColor whiteColor];
+        [self.view addSubview:_popupWebView];
+        return _popupWebView;
+    } else {
+        [webView loadRequest:navigationAction.request];
+    }
   }
 
   return nil;
+}
+
+-(void)webViewDidClose:(WKWebView *)webView {
+    [self releasePopupWebView];
 }
 
 @end
